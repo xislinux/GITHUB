@@ -1,19 +1,13 @@
-name: Build & Split Minecraft Server
+name: Build & Upload Server to Repo
 
 on:
   workflow_dispatch:
-    inputs:
-      paper_version:
-        description: 'PaperMC version (1.21.5, 1.20.4, etc.)'
-        required: false
-        default: '1.21.5'
-        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  # Needed to push to repo
     
     steps:
       - name: Checkout repository
@@ -25,210 +19,82 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Create server directory
+      - name: Download Paper 1.20.4 and Slimefun
         run: |
-          mkdir -p server
+          mkdir -p server/plugins
           cd server
-          echo "📁 Server directory created"
-
-      # ========== PAPERMC DOWNLOAD ==========
-      - name: Download PaperMC 1.21.5
-        run: |
-          cd server
-          echo "📥 Downloading PaperMC 1.21.5..."
-          wget -O paper.jar "https://fill-data.papermc.io/v1/objects/cabed3ae77cf55deba7c7d8722bc9cfd5e991201c211665f9265616d9fe5c77b/paper-1.20.4-499.jar"
           
-          if [ -f paper.jar ]; then
-            echo "✅ PaperMC downloaded successfully ($(du -h paper.jar | cut -f1))"
-          else
-            echo "❌ PaperMC download failed"
-            exit 1
-          fi
-
-      # ========== SLIMEFUN DOWNLOAD WITH FALLBACKS ==========
-      - name: Download Slimefun4 with fallbacks
-        run: |
-          cd server
-          mkdir -p plugins
-          echo "📥 Downloading Slimefun4..."
+          # Paper 1.20.4 (works with Slimefun)
+          wget -q -O paper.jar "https://fill-data.papermc.io/v1/objects/cabed3ae77cf55deba7c7d8722bc9cfd5e991201c211665f9265616d9fe5c77b/paper-1.20.4-499.jar"
           
-          # Try multiple sources in order
-          if wget -O plugins/Slimefun4.jar "https://blob.build/dl/Slimefun4/Dev/latest" 2>/dev/null; then
-            echo "✅ Slimefun downloaded from blob.build (dev build)"
-          elif wget -O plugins/Slimefun4.jar "https://blob.build/project/Slimefun4/RC" 2>/dev/null; then
-            echo "✅ Slimefun downloaded from blob.build (RC build)"
-          elif wget -O plugins/Slimefun4.jar "https://thebusybiscuit.github.io/builds/TheBusyBiscuit/Slimefun4/stable/Slimefun4-35.jar" 2>/dev/null; then
-            echo "✅ Slimefun downloaded from GitHub Pages"
-          elif wget -O plugins/Slimefun4.jar "https://github.com/Slimefun/Slimefun4/releases/download/v4.9.6/Slimefun4-4.9.6.jar" 2>/dev/null; then
-            echo "✅ Slimefun downloaded from GitHub Releases"
-          else
-            echo "❌ All Slimefun download methods failed"
-            exit 1
-          fi
+          # Slimefun dev build
+          wget -q -O plugins/Slimefun4.jar "https://blob.build/dl/Slimefun4/Dev/latest"
           
-          ls -la plugins/Slimefun4.jar
-
-      # ========== FIRST RUN (Generate files) ==========
-      - name: First server run - Accept EULA
-        run: |
-          cd server
+          # Accept EULA
           echo "eula=true" > eula.txt
-          echo "🚀 Running server for first time..."
-          timeout 20s java -jar paper.jar --nogui || true
-          echo "✅ First run complete"
+          
+          # Cracked server config
+          echo "online-mode=false" > server.properties
+          echo "level-name=world" >> server.properties
+          
+          cd ..
 
-      # ========== INSTALL SLIMEFUN PROPERLY ==========
-      - name: Verify Slimefun installation
+      - name: Remove old server folder if exists
         run: |
-          cd server
-          if [ -f plugins/Slimefun4.jar ]; then
-            echo "✅ Slimefun.jar is in plugins folder"
-          else
-            echo "❌ Slimefun.jar not found in plugins folder"
-            exit 1
+          rm -rf server-old 2>/dev/null || true
+          # If server folder already exists, back it up
+          if [ -d "server" ]; then
+            mv server server-old
+            echo "📁 Backed up existing server folder to server-old"
           fi
 
-      # ========== SECOND RUN (Load Slimefun) ==========
-      - name: Second server run - Load Slimefun
+      - name: Clean unnecessary files (optional)
         run: |
           cd server
-          echo "🚀 Running server with Slimefun enabled..."
-          timeout 30s java -jar paper.jar --nogui || true
-          echo "✅ Slimefun initialization complete"
+          # Remove logs and cache to keep repo size small
+          rm -rf logs/ cache/ 2>/dev/null || true
+          cd ..
 
-      # ========== CLEANUP ==========
-      - name: Clean unnecessary files
+      - name: Commit server folder to repository
         run: |
-          cd server
-          echo "🧹 Cleaning up..."
-          rm -rf logs/
-          rm -rf cache/
-          rm -rf world_nether/
-          rm -rf world_the_end/
-          rm -f *.log
-          rm -f crash-reports/*.txt 2>/dev/null || true
-          echo "✅ Cleanup complete"
-
-      # ========== CREATE REASSEMBLY SCRIPT ==========
-      - name: Create reassembly script
-        run: |
-          cat > reassemble.sh << 'EOF'
-          #!/bin/bash
-          
-          echo "=========================================="
-          echo "🔄 Reassembling Minecraft Server"
-          echo "=========================================="
-          
-          # Check if all parts exist
-          for i in 1 2 3 4 5; do
-            if [ ! -f "server-part-$i-of-5.tar.gz" ]; then
-              echo "❌ Missing: server-part-$i-of-5.tar.gz"
-              echo "Make sure all 5 parts are in the same directory"
-              exit 1
-            fi
-          done
-          
-          echo "✅ All 5 parts found"
-          echo "📦 Combining parts..."
-          
-          # Combine all parts
-          cat server-part-1-of-5.tar.gz \
-              server-part-2-of-5.tar.gz \
-              server-part-3-of-5.tar.gz \
-              server-part-4-of-5.tar.gz \
-              server-part-5-of-5.tar.gz > server-full.tar.gz
-          
-          echo "📂 Extracting..."
-          tar xzf server-full.tar.gz
-          
-          echo "🧹 Cleaning up..."
-          rm server-full.tar.gz
-          
-          echo ""
-          echo "✅ SERVER READY!"
-          echo ""
-          echo "🎮 To start your Slimefun server:"
-          echo "   cd server"
-          echo "   java -jar paper.jar --nogui"
-          echo ""
-          echo "   (remove --nogui for GUI window)"
-          echo "=========================================="
-          EOF
-          
-          chmod +x reassemble.sh
-          echo "✅ Reassembly script created"
-
-      # ========== SPLIT INTO 5 CHUNKS ==========
-      - name: Split server into 5 chunks (bypass 100MB limit)
-        run: |
-          cd server
-          echo "📦 Creating split archives..."
-          
-          # Create tar.gz of entire server
-          tar czf - . | split -b 100M - server-part.tar.gz.
-          
-          # Rename for clarity
-          mv server-part.tar.gz.aa server-part-1-of-5.tar.gz 2>/dev/null || true
-          mv server-part.tar.gz.ab server-part-2-of-5.tar.gz 2>/dev/null || true
-          mv server-part.tar.gz.ac server-part-3-of-5.tar.gz 2>/dev/null || true
-          mv server-part.tar.gz.ad server-part-4-of-5.tar.gz 2>/dev/null || true
-          mv server-part.tar.gz.ae server-part-5-of-5.tar.gz 2>/dev/null || true
-          
-          echo ""
-          echo "📊 Split results:"
-          ls -lh server-part-*.tar.gz
-          
-          # Count how many parts were created
-          PART_COUNT=$(ls server-part-*.tar.gz 2>/dev/null | wc -l)
-          echo ""
-          echo "✅ Server split into $PART_COUNT parts"
-
-      # ========== UPLOAD ARTIFACTS ==========
-      - name: Upload chunks as artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: minecraft-server
-          path: |
-            server/server-part-*.tar.gz
-            reassemble.sh
-          compression-level: 0
-          retention-days: 7
-
-      # ========== ALSO SAVE TO REPO ==========
-      - name: Save chunks to repository (for git clone)
-        run: |
-          mkdir -p server-chunks
-          cp server/server-part-*.tar.gz server-chunks/ 2>/dev/null || true
-          cp reassemble.sh server-chunks/
-          
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add server-chunks/
-          git commit -m "Add server chunks (split into 5 parts)" || echo "No changes"
+          
+          # Add the entire server folder
+          git add server/
+          
+          # Commit (will say "nothing to commit" if no changes)
+          git commit -m "Add Minecraft server folder (Paper 1.20.4 + Slimefun)" || echo "No changes to commit"
+          
+          # Push to GitHub
           git push
+          
+          echo ""
+          echo "✅ Server folder uploaded to repository!"
 
-      # ========== FINAL OUTPUT ==========
-      - name: Show download instructions
+      - name: Show instructions
         run: |
           echo ""
-          echo "╔══════════════════════════════════════════════════════════╗"
-          echo "║           ✅ SERVER BUILD COMPLETE!                      ║"
-          echo "╚══════════════════════════════════════════════════════════╝"
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║              ✅ SERVER FOLDER UPLOADED!                       ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
-          echo "📥 DOWNLOAD OPTIONS:"
+          echo "📥 To get your server on your computer:"
           echo ""
-          echo "Option 1 - GitHub Artifacts (recommended):"
-          echo "  1. Go to Actions tab → Click this workflow"
-          echo "  2. Scroll to 'Artifacts' → Download 'minecraft-server.zip'"
+          echo "  git pull"
           echo ""
-          echo "Option 2 - Clone from repository:"
+          echo "  OR if you haven't cloned yet:"
+          echo ""
           echo "  git clone https://github.com/${{ github.repository }}.git"
-          echo "  cd server-chunks"
           echo ""
-          echo "🔄 TO REASSEMBLE:"
-          echo "  bash reassemble.sh"
+          echo "🎮 To start your Slimefun server:"
           echo ""
-          echo "🎮 TO START SERVER:"
           echo "  cd server"
           echo "  java -jar paper.jar --nogui"
+          echo ""
+          echo "📁 Server folder is: server/"
+          echo "   - paper.jar"
+          echo "   - plugins/Slimefun4.jar"
+          echo "   - eula.txt (already accepted)"
+          echo "   - server.properties (online-mode=false)"
           echo ""
