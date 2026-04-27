@@ -21,11 +21,8 @@ jobs:
 
       - name: Download Paper 1.20.4 and Slimefun
         run: |
-          # Create folder FIRST
           mkdir -p server
           mkdir -p server/plugins
-          
-          # Now go into it
           cd server
           
           echo "📥 Downloading Paper 1.20.4..."
@@ -34,13 +31,63 @@ jobs:
           echo "📥 Downloading Slimefun..."
           wget -q -O plugins/Slimefun4.jar "https://blob.build/dl/Slimefun4/Dev/latest"
           
-          echo "⚙️ Configuring server..."
+          # Accept EULA
           echo "eula=true" > eula.txt
+          
+          # Basic config
           echo "online-mode=false" > server.properties
           echo "level-name=world" >> server.properties
           
-          echo "✅ Download complete!"
-          ls -la
+          cd ..
+
+      - name: Run server to initialize Slimefun
+        run: |
+          cd server
+          echo "🚀 Running server to initialize Slimefun..."
+          echo "   (This may take 1-2 minutes)"
+          
+          # Start server in background
+          java -jar paper.jar --nogui &
+          SERVER_PID=$!
+          
+          # Wait for Slimefun to fully initialize
+          echo "⏳ Waiting for Slimefun to load dependencies..."
+          
+          # Wait up to 3 minutes for Slimefun to finish
+          for i in {1..180}; do
+            if grep -q "Slimefun has been enabled" logs/latest.log 2>/dev/null; then
+              echo "✅ Slimefun has been enabled!"
+              break
+            fi
+            if grep -q "Slimefun.*disabled" logs/latest.log 2>/dev/null; then
+              echo "❌ Slimefun failed to enable - check logs"
+              break
+            fi
+            sleep 1
+          done
+          
+          # Give it a few more seconds for downloads
+          echo "⏳ Waiting for Slimefun downloads to complete..."
+          sleep 10
+          
+          # Stop the server gracefully
+          echo "🛑 Stopping server..."
+          echo "stop" | nc localhost 25575 2>/dev/null || echo "stop" | timeout 5 telnet localhost 25575 2>/dev/null || kill $SERVER_PID
+          
+          sleep 3
+          echo "✅ Server initialization complete!"
+          cd ..
+
+      - name: Clean unnecessary files
+        run: |
+          cd server
+          # Remove logs to save space
+          rm -rf logs/
+          # Remove crash reports
+          rm -rf crash-reports/
+          # Remove session lock file
+          rm -f session.lock
+          # Keep everything else (Slimefun data is preserved!)
           cd ..
 
       - name: Commit server folder to repository
@@ -49,7 +96,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           git add server/
-          git commit -m "Add Minecraft server folder (Paper 1.20.4 + Slimefun)" || echo "No changes to commit"
+          git commit -m "Add fully initialized Minecraft server (Paper 1.20.4 + Slimefun)" || echo "No changes to commit"
           git push
           
           echo ""
