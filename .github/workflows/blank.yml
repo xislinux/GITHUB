@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Needed to push to repo
+      contents: write
     
     steps:
       - name: Checkout repository
@@ -21,38 +21,26 @@ jobs:
 
       - name: Download Paper 1.20.4 and Slimefun
         run: |
+          # Create folder FIRST
+          mkdir -p server
           mkdir -p server/plugins
+          
+          # Now go into it
           cd server
           
-          # Paper 1.20.4 (works with Slimefun)
+          echo "📥 Downloading Paper 1.20.4..."
           wget -q -O paper.jar "https://fill-data.papermc.io/v1/objects/cabed3ae77cf55deba7c7d8722bc9cfd5e991201c211665f9265616d9fe5c77b/paper-1.20.4-499.jar"
           
-          # Slimefun dev build
+          echo "📥 Downloading Slimefun..."
           wget -q -O plugins/Slimefun4.jar "https://blob.build/dl/Slimefun4/Dev/latest"
           
-          # Accept EULA
+          echo "⚙️ Configuring server..."
           echo "eula=true" > eula.txt
-          
-          # Cracked server config
           echo "online-mode=false" > server.properties
           echo "level-name=world" >> server.properties
           
-          cd ..
-
-      - name: Remove old server folder if exists
-        run: |
-          rm -rf server-old 2>/dev/null || true
-          # If server folder already exists, back it up
-          if [ -d "server" ]; then
-            mv server server-old
-            echo "📁 Backed up existing server folder to server-old"
-          fi
-
-      - name: Clean unnecessary files (optional)
-        run: |
-          cd server
-          # Remove logs and cache to keep repo size small
-          rm -rf logs/ cache/ 2>/dev/null || true
+          echo "✅ Download complete!"
+          ls -la
           cd ..
 
       - name: Commit server folder to repository
@@ -60,13 +48,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Add the entire server folder
           git add server/
-          
-          # Commit (will say "nothing to commit" if no changes)
           git commit -m "Add Minecraft server folder (Paper 1.20.4 + Slimefun)" || echo "No changes to commit"
-          
-          # Push to GitHub
           git push
           
           echo ""
@@ -79,22 +62,10 @@ jobs:
           echo "║              ✅ SERVER FOLDER UPLOADED!                       ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
-          echo "📥 To get your server on your computer:"
-          echo ""
+          echo "📥 On your computer, run:"
           echo "  git pull"
           echo ""
-          echo "  OR if you haven't cloned yet:"
-          echo ""
-          echo "  git clone https://github.com/${{ github.repository }}.git"
-          echo ""
-          echo "🎮 To start your Slimefun server:"
-          echo ""
+          echo "🎮 Then start your server:"
           echo "  cd server"
           echo "  java -jar paper.jar --nogui"
-          echo ""
-          echo "📁 Server folder is: server/"
-          echo "   - paper.jar"
-          echo "   - plugins/Slimefun4.jar"
-          echo "   - eula.txt (already accepted)"
-          echo "   - server.properties (online-mode=false)"
           echo ""
