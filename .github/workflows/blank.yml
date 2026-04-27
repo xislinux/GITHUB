@@ -1,0 +1,160 @@
+name: Build and Split Minecraft Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'PaperMC Version (leave blank for 1.21.5)'
+        required: false
+        default: '1.21.5'
+        type: string
+
+jobs:
+  build-server:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Create server directory
+        run: |
+          mkdir -p minecraft-server
+          cd minecraft-server
+          echo "Server directory created"
+
+      - name: Download PaperMC 1.21.5
+        run: |
+          cd minecraft-server
+          wget -O paper.jar "https://fill-data.papermc.io/v1/objects/2ae6ae22adf417699746e0f89fc2ef6cb6ee050a5f6608cee58f0535d60b509e/paper-1.21.5-114.jar"
+          echo "PaperMC downloaded"
+
+      - name: Download Slimefun4
+        run: |
+          cd minecraft-server
+          wget -O Slimefun4-latest.jar "https://builds.guizhanss.net/Slimefun4/master-Slimefun4/latest/Slimefun4-latest.jar"
+          echo "Slimefun downloaded"
+
+      - name: Run Paper once to generate files and accept EULA
+        run: |
+          cd minecraft-server
+          echo "eula=true" > eula.txt
+          echo "Running Paper server for first-time setup..."
+          timeout 30s java -jar paper.jar --nogui || true
+          echo "Initial server run complete"
+
+      - name: Install Slimefun plugin
+        run: |
+          cd minecraft-server
+          mkdir -p plugins
+          mv Slimefun4-latest.jar plugins/
+          echo "Slimefun installed to plugins folder"
+
+      - name: Run Paper with Slimefun
+        run: |
+          cd minecraft-server
+          echo "Running Paper with Slimefun enabled..."
+          timeout 45s java -jar paper.jar --nogui || true
+          echo "Slimefun initialization complete"
+
+      - name: Clean unnecessary files
+        run: |
+          cd minecraft-server
+          # Remove logs to save space
+          rm -rf logs/
+          # Remove cached data that will regenerate
+          rm -rf cache/
+          # Keep only essential files
+          echo "Cleaned temporary files"
+
+      - name: Create split archives (5 chunks of ~100MB or less)
+        run: |
+          cd minecraft-server
+          # Calculate total size
+          TOTAL_SIZE=$(du -sb . | cut -f1)
+          echo "Total server size: $TOTAL_SIZE bytes"
+          
+          # Split into 5 parts using split command
+          tar czf - . | split -b 100M - server-part.tar.gz.
+          
+          # Rename parts for easier download
+          mv server-part.tar.gz.aa server-part-1-of-5.tar.gz
+          mv server-part.tar.gz.ab server-part-2-of-5.tar.gz
+          mv server-part.tar.gz.ac server-part-3-of-5.tar.gz
+          mv server-part.tar.gz.ad server-part-4-of-5.tar.gz
+          mv server-part.tar.gz.ae server-part-5-of-5.tar.gz
+          
+          echo "Server split into 5 chunks"
+          ls -lh server-part-*.tar.gz
+
+      - name: Create reassembly script
+        run: |
+          cat > reassemble.sh << 'EOF'
+          #!/bin/bash
+          echo "Reassembling Minecraft Server..."
+          echo "Make sure all 5 parts (server-part-1-of-5.tar.gz through server-part-5-of-5.tar.gz) are in the same directory"
+          
+          # Combine all parts
+          cat server-part-1-of-5.tar.gz server-part-2-of-5.tar.gz server-part-3-of-5.tar.gz server-part-4-of-5.tar.gz server-part-5-of-5.tar.gz > server-full.tar.gz
+          
+          echo "Extracting..."
+          tar xzf server-full.tar.gz
+          
+          echo "Cleanup..."
+          rm server-full.tar.gz
+          
+          echo "Done! Run the server with: java -jar paper.jar --nogui"
+          echo "Or to see the GUI: java -jar paper.jar"
+          EOF
+          
+          chmod +x reassemble.sh
+          echo "Reassembly script created"
+
+      - name: Upload all 5 chunks as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-server-chunks
+          path: |
+            minecraft-server/server-part-*.tar.gz
+            reassemble.sh
+          compression-level: 0
+          retention-days: 7
+
+      - name: Also commit to repository (optional)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdir -p server-chunks
+          cp minecraft-server/server-part-*.tar.gz server-chunks/
+          cp reassemble.sh server-chunks/
+          git add server-chunks/
+          git commit -m "Add server chunks (split into 5 parts)" || echo "No changes to commit"
+          git push
+
+      - name: Display download instructions
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "✅ SERVER BUILD COMPLETE!"
+          echo "=========================================="
+          echo ""
+          echo "📦 To download your server:"
+          echo "1. Go to Actions tab -> Click this workflow run"
+          echo "2. Scroll to 'Artifacts' section"
+          echo "3. Download 'minecraft-server-chunks.zip'"
+          echo ""
+          echo "🔄 To reassemble the server:"
+          echo "1. Extract the downloaded zip"
+          echo "2. Run: bash reassemble.sh"
+          echo "3. Start server: java -jar paper.jar --nogui"
+          echo ""
+          echo "📁 Server chunks also saved to 'server-chunks/' folder in your repo"
+          echo "=========================================="
