@@ -1,0 +1,271 @@
+name: Build Minecraft Server (ZIP Version)
+
+on:
+  workflow_dispatch:
+    inputs:
+      paper_version:
+        description: 'Paper version (1.21.5, 1.20.4, etc.)'
+        required: false
+        default: '1.21.5'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Create and setup server directory
+        run: |
+          mkdir -p server
+          cd server
+          echo "📁 Server directory created"
+
+      # ========== DOWNLOAD PAPERMC ==========
+      - name: Download PaperMC 1.21.5
+        run: |
+          cd server
+          echo "📥 Downloading PaperMC..."
+          wget -q -O paper.jar "https://fill-data.papermc.io/v1/objects/2ae6ae22adf417699746e0f89fc2ef6cb6ee050a5f6608cee58f0535d60b509e/paper-1.21.5-114.jar"
+          echo "✅ PaperMC downloaded: $(du -h paper.jar | cut -f1)"
+
+      # ========== DOWNLOAD SLIMEFUN ==========
+      - name: Download Slimefun4
+        run: |
+          cd server
+          mkdir -p plugins
+          echo "📥 Downloading Slimefun4..."
+          
+          if wget -q -O plugins/Slimefun4.jar "https://blob.build/dl/Slimefun4/Dev/latest"; then
+            echo "✅ Slimefun downloaded (dev build)"
+          elif wget -q -O plugins/Slimefun4.jar "https://thebusybiscuit.github.io/builds/TheBusyBiscuit/Slimefun4/stable/Slimefun4-35.jar"; then
+            echo "✅ Slimefun downloaded (stable build)"
+          else
+            echo "❌ Failed to download Slimefun"
+            exit 1
+          fi
+          
+          ls -la plugins/Slimefun4.jar
+
+      # ========== FIRST RUN ==========
+      - name: First server run - Accept EULA
+        run: |
+          cd server
+          echo "eula=true" > eula.txt
+          echo "🚀 Initializing server..."
+          timeout 20s java -jar paper.jar --nogui || true
+          echo "✅ First run complete"
+
+      # ========== SECOND RUN (with Slimefun) ==========
+      - name: Second run - Load Slimefun
+        run: |
+          cd server
+          echo "🚀 Loading Slimefun..."
+          timeout 30s java -jar paper.jar --nogui || true
+          echo "✅ Slimefun initialized"
+
+      # ========== CLEANUP ==========
+      - name: Clean unnecessary files
+        run: |
+          cd server
+          echo "🧹 Cleaning up..."
+          rm -rf logs/
+          rm -rf cache/
+          rm -rf world_nether/
+          rm -rf world_the_end/
+          rm -f *.log
+          rm -f crash-reports/*.txt 2>/dev/null || true
+          echo "✅ Cleanup complete"
+          echo "Final server size: $(du -sh . | cut -f1)"
+
+      # ========== CREATE SINGLE ZIP ==========
+      - name: Create single ZIP archive
+        run: |
+          echo "📦 Creating single ZIP archive..."
+          cd server
+          zip -r ../minecraft-server.zip . -x "*.log"
+          cd ..
+          echo "✅ Created: minecraft-server.zip ($(du -h minecraft-server.zip | cut -f1))"
+
+      # ========== SPLIT INTO 2 ZIP PARTS (if needed) ==========
+      - name: Split into 2 parts (for GitHub limits)
+        run: |
+          echo "📦 Creating split parts..."
+          
+          # Check file size
+          SIZE=$(stat -c%s minecraft-server.zip)
+          if [ $SIZE -gt 100000000 ]; then
+            echo "File is >100MB, splitting into 2 parts..."
+            split -b 95M minecraft-server.zip server-part.
+            mv server-part.aa server-part-1.zip
+            mv server-part.ab server-part-2.zip
+            echo "✅ Created 2 parts"
+          else
+            echo "File is under 100MB, no split needed"
+            cp minecraft-server.zip server-part-1.zip
+          fi
+          
+          ls -lh server-part-*.zip
+
+      # ========== CREATE WINDOWS JOIN SCRIPT ==========
+      - name: Create Windows join script
+        run: |
+          cat > join-server.bat << 'EOF'
+          @echo off
+          title Minecraft Server Reassembler
+          echo ========================================
+          echo    Minecraft Server Reassembler
+          echo ========================================
+          echo.
+          
+          if exist "server-part-1.zip" (
+              echo [OK] Found part 1
+          ) else (
+              echo [ERROR] Missing server-part-1.zip
+              pause
+              exit /b 1
+          )
+          
+          if exist "server-part-2.zip" (
+              echo [OK] Found part 2
+              echo.
+              echo Combining parts...
+              copy /b server-part-1.zip + server-part-2.zip minecraft-server.zip
+              echo.
+              echo [OK] Combined successfully!
+              echo.
+              echo Extracting...
+              powershell -command "Expand-Archive -Force minecraft-server.zip server"
+              echo.
+              echo ========================================
+              echo    SERVER READY!
+              echo ========================================
+              echo.
+              echo To start your Slimefun server:
+              echo   cd server
+              echo   java -jar paper.jar --nogui
+              echo.
+          ) else (
+              echo [INFO] Only 1 part found, no combining needed
+              echo.
+              echo Extracting...
+              powershell -command "Expand-Archive -Force server-part-1.zip server"
+              echo.
+              echo ========================================
+              echo    SERVER READY!
+              echo ========================================
+          )
+          
+          pause
+          EOF
+          echo "✅ Created join-server.bat"
+
+      # ========== CREATE LINUX/MAC JOIN SCRIPT ==========
+      - name: Create Linux join script
+        run: |
+          cat > join-server.sh << 'EOF'
+          #!/bin/bash
+          echo "========================================"
+          echo "   Minecraft Server Reassembler"
+          echo "========================================"
+          echo ""
+          
+          if [ -f "server-part-1.zip" ]; then
+              echo "[OK] Found part 1"
+          else
+              echo "[ERROR] Missing server-part-1.zip"
+              exit 1
+          fi
+          
+          if [ -f "server-part-2.zip" ]; then
+              echo "[OK] Found part 2"
+              echo ""
+              echo "Combining parts..."
+              cat server-part-1.zip server-part-2.zip > minecraft-server.zip
+              echo ""
+              echo "[OK] Combined successfully!"
+              echo ""
+              echo "Extracting..."
+              unzip -q minecraft-server.zip -d server
+          else
+              echo "[INFO] Only 1 part found, no combining needed"
+              echo ""
+              echo "Extracting..."
+              unzip -q server-part-1.zip -d server
+          fi
+          
+          echo ""
+          echo "========================================"
+          echo "   SERVER READY!"
+          echo "========================================"
+          echo ""
+          echo "To start your Slimefun server:"
+          echo "  cd server"
+          echo "  java -jar paper.jar --nogui"
+          echo ""
+          EOF
+          
+          chmod +x join-server.sh
+          echo "✅ Created join-server.sh"
+
+      # ========== UPLOAD EVERYTHING ==========
+      - name: Upload all files
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-server-files
+          path: |
+            server-part-*.zip
+            join-server.bat
+            join-server.sh
+          compression-level: 0
+          retention-days: 7
+
+      # ========== ALSO SAVE TO REPOSITORY ==========
+      - name: Save to repository
+        run: |
+          mkdir -p server-files
+          cp server-part-*.zip server-files/ 2>/dev/null || true
+          cp join-server.bat join-server.sh server-files/
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add server-files/
+          git commit -m "Add Minecraft server files (ZIP format)" || echo "No changes"
+          git push
+
+      # ========== FINAL OUTPUT ==========
+      - name: Show instructions
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║              ✅ SERVER BUILD COMPLETE!                        ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "📥 DOWNLOAD OPTIONS:"
+          echo ""
+          echo "Option 1 - GitHub Artifacts (recommended):"
+          echo "  • Go to Actions tab → Click this workflow"
+          echo "  • Scroll to 'Artifacts' → Download 'minecraft-server-files.zip'"
+          echo ""
+          echo "Option 2 - Clone from repository:"
+          echo "  git clone https://github.com/${{ github.repository }}.git"
+          echo "  cd server-files"
+          echo ""
+          echo "🔧 TO REASSEMBLE:"
+          echo "  Windows: Double-click join-server.bat"
+          echo "  Linux/Mac: ./join-server.sh"
+          echo ""
+          echo "🎮 TO START SERVER:"
+          echo "  cd server"
+          echo "  java -jar paper.jar --nogui"
+          echo "  (remove --nogui for GUI window)"
+          echo ""
