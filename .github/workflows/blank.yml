@@ -37,11 +37,20 @@ jobs:
           wget -O paper.jar "https://fill-data.papermc.io/v1/objects/2ae6ae22adf417699746e0f89fc2ef6cb6ee050a5f6608cee58f0535d60b509e/paper-1.21.5-114.jar"
           echo "PaperMC downloaded"
 
-      - name: Download Slimefun4
-        run: |
-          cd minecraft-server
-          wget -O Slimefun4-latest.jar "https://builds.guizhanss.net/Slimefun4/master-Slimefun4/latest/Slimefun4-latest.jar"
-          echo "Slimefun downloaded"
+        - name: Download Slimefun4 (Development Build)
+    run: |
+      cd minecraft-server
+      # Method 1: Development build from blob.build/dl
+      wget -O Slimefun4-latest.jar "https://blob.build/dl/Slimefun4/Dev/latest"
+    
+      # If Method 1 fails, uncomment Method 2 below:
+      # wget -O Slimefun4-latest.jar "https://blob.build/project/Slimefun4/RC"
+    
+      # If both fail, Method 3 - direct stable JAR:
+      # wget -O Slimefun4-latest.jar "https://thebusybiscuit.github.io/builds/TheBusyBiscuit/Slimefun4/stable/Slimefun4-35.jar"
+    
+      echo "Slimefun download complete"
+      ls -la Slimefun4*.jar
 
       - name: Run Paper once to generate files and accept EULA
         run: |
